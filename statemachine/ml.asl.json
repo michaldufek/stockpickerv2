@@ -1,0 +1,46 @@
+{
+    "Comment": "A state machine that create custom machine learning models.",
+    "StartAt": "CheckIfBucketExists",
+
+    "States": {
+        "CheckIfBucketExists":{
+            "Type": "Task",
+            "Resource": "${CreateS3BucketArn}",
+            "Next": "CreateTrainingJob"
+        },
+        "CreateTrainingJob":{
+            "Type": "Task",
+            "Resource": "${CreateTrainingJobArn}",
+            "ResultPath": "$.TrainingJob",
+            "Retry": [
+                {
+                    "ErrorEquals": [
+                        "States.ALL"
+                    ],
+                    "MaxAttempts": 3,
+                    "IntervalSeconds": 5
+                }
+            ],
+            "Next": "CreateModel"
+        },
+        "CreateModel":{
+            "Type": "Task",
+            "Resource": "${CreateModelArn}",
+            "Retry": [
+                {
+                    "ErrorEquals": [
+                        "States.ALL"
+                    ],
+                    "MaxAttempts": 3,
+                    "IntervalSeconds": 5
+                }
+            ],
+            "Next": "CreateEndpoint"
+        },
+        "CreateEndpoint":{
+            "Type": "Task",
+            "Resource": "${CreateEndpointArn}",
+            "End": true
+        }
+    }
+}

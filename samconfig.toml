@@ -1,0 +1,11 @@
+version = 0.1
+[default]
+[default.deploy]
+[default.deploy.parameters]
+stack_name = "stockpicker"
+s3_bucket = "aws-sam-cli-managed-default-samclisourcebucket-17k93bmohpadl"
+s3_prefix = "stockpicker"
+region = "eu-central-1"
+capabilities = "CAPABILITY_NAMED_IAM"
+image_repositories = ["DownloadPrices=384850799342.dkr.ecr.eu-central-1.amazonaws.com/stockpicker1505035c/downloadprices560f04a7repo"]
+parameter_overrides = "userId=\"1ab7e703-a628-4fd8-9f07-48dfcb2ac84d\" Image=\"664544806723.dkr.ecr.eu-central-1.amazonaws.com/linear-learner:latest\" JobExecutionName=\"initial-job-name\""

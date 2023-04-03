@@ -1,0 +1,10 @@
+{
+    "userId": "1ab7e703-a628-4fd8-9f07-48dfcb2ac84d", 
+    "instanceType": "ml.m5.large",
+    "Image": "664544806723.dkr.ecr.eu-central-1.amazonaws.com/linear-learner:latest",
+    "hyperparameters": {
+        "predictor_type": "regressor"
+    },
+    "universe": "sp100",
+    "ResourceProperties": {}
+}

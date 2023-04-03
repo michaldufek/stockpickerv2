@@ -1,0 +1,239 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Workflow for custom model training.
+
+Parameters:
+  userId:
+    Type: String
+    Default: '0'
+  Image:
+    Type: String
+    Default: "664544806723.dkr.ecr.eu-central-1.amazonaws.com/linear-learner:latest"
+  JobExecutionName:
+    Type: String
+    Default: "initial-job-name"
+
+# Statemachine
+# Lambda for S3 buckets
+# Model
+# Endpoint
+# Lambda for endpoint creation
+# Roles for: statemachine, api as event trigger, lamdas and model
+
+Globals:
+  Function:
+    Timeout: 30
+    MemorySize: 128
+
+Resources:
+  DownloadPrices:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      PackageType: Image
+      Timeout: 600
+      MemorySize: 3008
+      Events:
+        DownloadPricesEvent:
+          Type: Schedule
+          Properties:
+            Enabled: True
+            Schedule: "rate(1 day)"
+      Policies:
+        #- DynamoDBCrudPolicy: 
+        #    TableName: !Ref ExistingTable
+        - S3FullAccessPolicy:
+            #BucketName: !Ref S3Bucket
+            BucketName: '*'
+    Metadata:
+      Dockerfile: Dockerfile
+      DockerContext: functions/download_prices/
+      DockerTag: python3.9-v2
+
+  Processing:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/create_processing_job/
+      Handler: create_job.lambda_handler
+      Timeout: 360
+      MemorySize: 1024
+      Runtime: python3.9
+      Role: !GetAtt CustomModelExecutionRole.Arn
+  
+  MLStateMachine:
+      Type: AWS::Serverless::StateMachine # More info about State Machine Resource: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-resource-statemachine.html
+      Properties:
+        Name: 'MLStateMachine'
+        DefinitionUri: statemachine/ml.asl.json
+        DefinitionSubstitutions:
+          MLStateMachineRoleArn: !GetAtt MLStateMachineRole.Arn
+          CreateS3BucketArn: !GetAtt CreateS3Bucket.Arn
+          CreateTrainingJobArn: !GetAtt CreateTrainingJob.Arn
+          CreateModelArn: !GetAtt CreateModel.Arn
+          CreateEndpointArn: !GetAtt CreateEndpointLambda.Arn
+          CustomModelExecutionRoleArn: !GetAtt CustomModelExecutionRole.Arn
+        Role: !GetAtt MLStateMachineRole.Arn
+        Events:
+          ApiEvent:
+            Type: Api
+            Properties:
+              Path: /train
+              Method: post
+              RestApiId: !Ref MLStateMachineApi #If you don't define this property, AWS SAM creates a default AWS::Serverless::Api 
+
+  MLStateMachineApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: mlstatemachineapi
+      StageName: dev
+      Cors: "'*'"
+      Auth:
+        DefaultAuthorizer: CognitoAuth
+        Authorizers:
+          CognitoAuth:
+            UserPoolArn: "arn:aws:cognito-idp:eu-central-1:384850799342:userpool/eu-central-1_2DOvQqmqH"
+
+  MLStateMachineRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument: {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": {"AWS": "*"},
+                            "Action": [
+                                "sts:AssumeRole"
+                            ]
+                        }
+                    ]
+                }
+        Description: String
+        ManagedPolicyArns:
+          - !Ref MLStateMachinePolicy
+
+  MLStateMachinePolicy:
+    Type: "AWS::IAM::ManagedPolicy"
+    Properties:
+      Description: "Managed policy for mlstatemachine"
+      ManagedPolicyName: "MLStatemachinePolicy"
+      Path: "/mlstatemachine/"
+      PolicyDocument: !Sub |
+        {
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "Action": [
+                        "lambda:InvokeFunction",
+                        "sagemaker:CreateTrainingJob",
+                        "sagemaker:DescribeTrainingJob",
+                        "sagemaker:StopTrainingJob",
+                        "sagemaker:CreateTransformJob",
+                        "sagemaker:DescribeTransformJob",
+                        "sagemaker:StopTransformJob",
+                        "sagemaker:AddTags",
+                        "sagemaker:DeleteTags",
+                        "s3:GetObject",
+                        "s3:ListBucket",
+                        "s3:PutObject",
+                        "states: CreateStateMachine",
+                        "states:CreateActivity",
+                        "states:CreateExecution",
+                        "states:DescribeExecution",
+                        "events:PutTargets",
+                        "events:PutRule",
+                        "events:DescribeRule"
+                    ],
+                    "Resource": "*"
+                }
+            ]
+        }
+
+  CreateS3Bucket:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/create_bucket
+      Handler: create_s3_bucket.create_s3_bucket
+      Runtime: python3.9
+      Role: !GetAtt CustomModelExecutionRole.Arn
+  
+  CreateTrainingJob:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/create_training_job
+      Handler: create_training_job.create_training_job
+      Runtime: python3.9
+      Role: !GetAtt CustomModelExecutionRole.Arn
+      Timeout: 900
+
+  CreateModel:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/create_model
+      Handler: create_model.create_model
+      Runtime: python3.9
+      Role: !GetAtt CustomModelExecutionRole.Arn
+  
+  CreateEndpointLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/create_endpoint
+      Handler: create_endpoint.create_endpoint
+      Runtime: python3.9
+      Role: !GetAtt CustomModelExecutionRole.Arn
+
+  CustomModelExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: CustomModelExecutionRole
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+               - "sagemaker.amazonaws.com"
+               - "lambda.amazonaws.com"
+               - "states.amazonaws.com"
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CustomModelExecutionPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sagemaker:CreateEndpoint
+                  - sagemaker:CreateEndpointConfig
+                  - sagemaker:CreateModel
+                  - sagemaker:CreateTransformJob
+                  - sagemaker:CreateProcessingJob
+                  - sagemaker:CreateNotebookInstance
+                  - sagemaker:CreateTrainingJob
+                  - sagemaker:DescribeEndpoint
+                  - sagemaker:DescribeEndpointConfig
+                  - sagemaker:DescribeModel
+                  - sagemaker:DescribeTransformJob
+                  - sagemaker:DescribeProcessingJob
+                  - sagemaker:DescribeNotebookInstance
+                  - sagemaker:DescribeTrainingJob
+                  - sagemaker:DeleteModel
+                  - sagemaker:ListEndpoints
+                  - sagemaker:ListEndpointConfigs
+                  - sagemaker:ListModels
+                  - sagemaker:ListTransformJobs
+                  - sagemaker:ListProcessingJobs
+                  - sagemaker:ListNotebookInstances
+                  - sagemaker:ListTrainingJobs
+                  - sagemaker:UpdateEndpoint
+                  - sagemaker:UpdateEndpointWeightsAndCapacities
+                  - sagemaker:UpdateNotebookInstance
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:ListBucket
+                  - iam:PassRole
+                  - iam:GetRole
+                  - logs:*
+                Resource:
+                  - '*'
